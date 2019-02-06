@@ -1,0 +1,311 @@
+---
+title: "Untitled"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## load package
+load basic library
+
+
+```{r load library,warning=FALSE, message=FALSE}
+library(ROAuth)
+library(RCurl)
+library(stringr)
+library(tm)
+library(ggmap)
+library(ggplot2)
+library(maps)
+library(mapdata)
+library(dplyr)
+library(plyr)
+library(wordcloud)
+library(quanteda)
+library(proxy)
+library(caret)
+library(e1071)
+library(topicmodels)
+library(slam)
+```
+
+## load data
+
+load data for further analysis
+
+```{r load data,warning=FALSE, message=FALSE}
+cleaned <- read.csv("rit-public-HappyDB-b9e529e/happydb/data/cleaned_hm.csv", header = TRUE)
+demographic <- read.csv("rit-public-HappyDB-b9e529e/happydb/data/demographic.csv", header = TRUE)
+total=merge(x = cleaned, y = demographic, by = "wid", all = TRUE)
+```
+
+### Part 1 - basic analysis and plots
+summarize the raw data
+```{r}
+summary(cleaned)
+```
+number vs marital
+```{r}
+barplot(tapply(t$hmid, t$marital, FUN=length),xlab="",names.arg = c("Unknown", "Divorced", "Married", "Seperated", "Single", "Widowed"),las=2,ylab='Score',main="Number of happymoments of different marital statuses",border="black",col="skyblue")
+```
+number vs age
+```{r}
+barplot(tapply(t$hmid, t$age, FUN=length),xlab="age",ylab='Score',main="Number of happymoments of different ages",border="black",col="darkseagreen1")
+```
+number vs gender
+```{r}
+barplot(tapply(t$hmid, t$gender, FUN=length),xlab="gender",names.arg = c('Unknown','F','M','o'),ylab='Score',main="Number of happymoments of different genders",border="black",col="rosybrown2")
+```
+number vs parenthood
+```{r}
+barplot(tapply(t$hmid, t$parenthood[!is.nan(t$parenthood)], FUN=length),xlab="parenthood",names.arg = c('Unknown','Yes','No'),ylab='Score',main="Number of happymoments of different parenthood statuses",border="black",col="sienna1")
+```
+number vs refelction time
+```{r echo=TRUE}
+barplot(tapply(t$hmid, t$reflection_period, FUN=length),xlab="refelction time",ylab='Score',main="Number of happymoments of different reflection periods",border="black",col="thistle1")
+```
+
+### Part 2 - Sentiment Analysis
+reference:https://www.r-bloggers.com/sentiment-analysis-on-donald-trump-using-r-and-tableau/
+This part focuses on the sentiment analysis of the happymoment to determine the happy level.
+
+```{r}
+# Create corpus
+corpus=VCorpus(VectorSource(total$cleaned_hm))
+
+# Convert to lower-case
+corpus=tm_map(corpus,tolower)
+
+# Remove stopwords
+corpus=tm_map(corpus,function(x) removeWords(x,stopwords()))
+
+# convert corpus to a Plain Text Document
+corpus=tm_map(corpus,PlainTextDocument)
+```
+
+```{r create wordcloud, echo=TRUE, message=TRUE, warning=FALSE}
+#col=brewer.pal(10, "BrBG")
+col=brewer.pal(6,"Dark2")
+wordcloud(corpus, min.freq=25, scale=c(3,1),rot.per = 0.25,
+          random.color=T, max.word=40, random.order=F,colors=col)
+```
+```{r sentiment analysis, echo=TRUE, message=TRUE, warning=FALSE}
+#use lexicon based sentiment analysis
+pos.words= read.delim("opinion-lexicon-English/positive-words.txt",header=FALSE)
+neg.words = read.delim("opinion-lexicon-English/negative-words.txt",header=FALSE)
+pos.words = c(pos.words,'happy','gift','had','have','get','got','found','nice','family','really','many','made','new','home','friends')
+neg.words = c(neg.words, 'bad')
+
+#use a wrapper function that calculates sentiment scores
+score.sentiment = function(sentences, pos.words, neg.words, .progress='none')
+{
+ require(plyr)
+ require(stringr)
+ 
+ # we got a vector of sentences. plyr will handle a list
+ # or a vector as an “l” for us
+ # we want a simple array (“a”) of scores back, so we use 
+ # “l” + “a” + “ply” = “laply”:
+ 
+scores = laply(sentences, function(sentence, pos.words, neg.words) {
+ 
+ # clean up sentences with R’s regex-driven global substitute, gsub():
+ sentence = gsub('[[:punct:]]', '', sentence)
+ sentence = gsub('[[:cntrl:]]', '', sentence)
+ sentence = gsub('\\d+', '', sentence)
+ # and convert to lower case:
+ sentence = tolower(sentence)
+ 
+ # split into words. str_split is in the stringr package
+ word.list = str_split(sentence, '\\s+')
+ # sometimes a list() is one level of hierarchy too much
+ words = unlist(word.list)
+ 
+ # compare our words to the dictionaries of positive & negative terms
+ pos.matches = match(words, pos.words)
+ neg.matches = match(words, neg.words)
+ 
+ # match() returns the position of the matched term or NA
+ # we just want a TRUE/FALSE:
+ pos.matches = !is.na(pos.matches)
+ neg.matches = !is.na(neg.matches)
+ 
+ # and conveniently enough, TRUE/FALSE will be treated as 1/0 by sum():
+ score = sum(pos.matches)-sum(neg.matches)
+ 
+ return(score)
+ }, pos.words, neg.words, .progress=.progress )
+ 
+ scores.df = data.frame(score=scores, text=sentences)
+ return(scores.df)
+}
+result=score.sentiment(total$cleaned_hm,pos.words,neg.words)
+summary(result$score)
+t=data.frame(total)
+t$score=result$score
+write.csv(t,file = 'sentiment_total.csv')
+```
+histogram
+```{r}
+hist(result$score,xlab=" ",main="Sentiment of happyDB",
+     border="black",col="skyblue")
+```
+score vs marital
+```{r}
+barplot(tapply(t$score, t$marital, FUN=mean),xlab="",names.arg = c("Unknown", "Divorced", "Married", "Seperated", "Single", "Widowed"),las=2,ylab='Score',main="Sentiment score of different marital statuses",border="black",col="yellow")
+```
+score vs age
+```{r}
+barplot(tapply(t$score, t$age, FUN=mean),xlab="age",ylab='Score',main="Sentiment score of different ages",border="black",col="darkseagreen1")
+```
+score vs gender
+```{r}
+barplot(tapply(t$score, t$gender, FUN=mean),xlab="gender",names.arg = c('Unknown','F','M','o'),ylab='Score',main="Sentiment score of different marital genders",border="black",col="rosybrown2")
+```
+score vs parenthood
+```{r}
+barplot(tapply(t$score, t$parenthood[!is.nan(t$parenthood)], FUN=mean),xlab="parenthood",names.arg = c('Unknown','Yes','No'),ylab='Score',main="Sentiment score of different parenthood statuses",border="black",col="sienna1")
+```
+score vs reflection time
+```{r}
+barplot(tapply(t$score, t$reflection_period, FUN=mean),xlab="refelction time",ylab='Score',main="Sentiment score of different reflection periods",border="black",col="thistle1")
+```
+```{r warning=FALSE}
+#MAP VISUALIZATION
+w2hr <- map_data("world2Hires")
+dim(w2hr)
+head(w2hr)
+country=as.data.frame(tapply(t$score, t$country, FUN=mean))
+write.csv(country,file = 'sentiment_country.csv')
+#modify the csv a little bit in excel and change the country code to country name
+country <- read.csv("sentiment_country_modified.csv", header = TRUE)
+code<- read.csv("countrycode.csv", header = TRUE)
+s.country <- merge(x=country, y=code, sort = FALSE, by.x = "countrycode",by.y = "countrycode")
+s.map<- merge(x=w2hr, y=s.country, sort = FALSE, by = "region",all.x = TRUE)
+#map:caution:super super super slow!!!
+ggplot(s.map, aes(long, lat)) +
+  geom_polygon(aes(group = group, fill = average_score)) +
+  coord_map("mercator")
+
+```
+```{r pressure, echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("sentiment score_country.png")
+```
+
+
+### Part 3 - Topicmodels
+reference:https://rstudio-pubs-static.s3.amazonaws.com/266565_171416f6c4be464fb11f7d8200c0b8f7.html
+Topicmodel of happyDB
+```{r echo=TRUE, warning=FALSE}
+c = read.csv("rit-public-HappyDB-b9e529e/happydb/data/cleaned_hm.csv", header = TRUE,sep=",", quote='\"\"', stringsAsFactors=FALSE)
+#create corpus
+m.corpus=Corpus(VectorSource(cleaned$cleaned_hm))
+
+#Remove punctuation - replace punctuation marks with " "
+m.corpus <- tm_map(m.corpus, removePunctuation)
+#Transform to lower case
+m.corpus <- tm_map(m.corpus,content_transformer(tolower))
+#Strip digits
+m.corpus <- tm_map(m.corpus, removeNumbers)
+#Remove stopwords from standard stopword list 
+m.corpus <- tm_map(m.corpus, removeWords, stopwords("english"))
+#Strip whitespace (cosmetic?)
+m.corpus <- tm_map(m.corpus, stripWhitespace)
+#Stem document to ensure words that have same meaning or different verb forms of the same word arent duplicated 
+m.corpus <- tm_map(m.corpus,stemDocument)
+#Create document-term matrix
+m.dtm <- DocumentTermMatrix(m.corpus)
+m.dtm
+
+#remove all zero entry
+row_total = apply(m.dtm, 1, sum)
+m.dtm.new = m.dtm[row_total>0,]
+
+#Load topicmodels package and run LDA to find n latent topics within the corpus
+#Run Latent Dirichlet Allocation (LDA) using Gibbs Sampling
+#set burn in
+burnin <-1000
+#set iterations
+iter<-2000
+#thin the spaces between samples
+thin <- 500
+#set random starts at 5
+nstart <-5
+#use random integers as seed 
+seed <- list(254672,109,122887,145629037,2)
+# return the highest probability as the result
+best <-TRUE
+#set number of topics 
+k <-7
+#run the LDA model
+ldaOut <- LDA(m.dtm.new,k, method="Gibbs", control=list(nstart=nstart, seed = seed, best=best, burnin = burnin, iter = iter, thin=thin))
+#view the top 6 terms for each of the 5 topics, create a matrix and write to csv
+terms(ldaOut,6)
+ldaOut.terms <- as.matrix(terms(ldaOut,6))
+#view the topic assignment for each document
+topics(ldaOut)
+#create a matrix and write to csv
+ldaOut.topics <-as.matrix(topics(ldaOut))
+write.csv(ldaOut.topics,file=paste("LDAGibbs",k,"textmodel.csv"))
+#Find probabilities associated with each topic assignment
+topicProbabilities <- as.data.frame(ldaOut@gamma) 
+write.csv(topicProbabilities,file=paste("LDAGibbs",k,"TopicProbabilities.csv"))
+#investigate topic probabilities data.frame
+summary(topicProbabilities)
+```
+
+### Part 4 - Text Classification
+reference:https://tutorials.quanteda.io/machine-learning/nb/
+Classify happyment into 7 categories using naive bayes model
+```{r echo=TRUE, warning=FALSE}
+category = read.csv("rit-public-HappyDB-b9e529e/happydb/data/cleaned_hm.csv", header = TRUE,sep=",", quote='\"\"', stringsAsFactors=FALSE)
+
+class<-as.data.frame(category[,c('predicted_category','cleaned_hm')])
+names(class)<-c("type","text")
+head(class)
+set.seed(2012)
+class=class[sample(nrow(class)),]
+
+# Create corpus
+t.corpus<-corpus(class$text)
+
+#attaching the class labels to the corpus message text
+docvars(t.corpus)<-class$type   #attaching the class labels to the corpus message text
+
+#separating Train and test data
+class.train=class[1:5000,]
+class.test=class[5000:nrow(class),]
+t.dfm=dfm(t.corpus, tolower = TRUE)  
+
+#generating document freq matrix
+t.dfm=dfm_trim(t.dfm, min_termfreq = 5, min_docfreq = 3)  
+t.dfm=dfm_weight(t.dfm)
+head(t.dfm)
+
+#training and testing data of dfm 
+t.dfm.train<-t.dfm[1:5000,]
+
+t.dfm.test<-t.dfm[5000:nrow(class),]
+
+#use to train bayes model
+nb.classifier <- textmodel_nb(t.dfm.train, class.train$type)
+summary(nb.classifier)
+
+#predict the category
+t.predictions <- predict(nb.classifier, newdata = t.dfm.test)
+
+#compare the result
+class_table <- table(class.test$type, t.predictions)
+class_table
+write.csv(class_table,file='comparison.csv')
+
+#calculate confusion table
+confusionMatrix(class_table, mode = "everything")
+```
+
